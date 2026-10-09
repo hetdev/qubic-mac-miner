@@ -76,6 +76,12 @@ used (address only).
 
 Check your worker at <https://pool.qubic.li> (log in with your address).
 
+Verified live on platform.qubic.li with this setup — Apple Silicon M-series,
+3 threads, GENERIC worker v234.0. The client's ~18 it/s show up as **18 H/s**
+on the pool dashboard, worker `mac-mini` **Active**, score 3:
+
+![Pool dashboard showing the mac-mini worker Active with 18 H/s hashrate](docs/assets/pool-worker-active.webp)
+
 **Note**: the client may log `Auth: no AuthenticateResponse from pool after 3
 attempts` — it shows up in registerless mode **and with a token** (a client
 quirk, not a config problem); the pool assigns work anyway and payouts are

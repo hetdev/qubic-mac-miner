@@ -80,7 +80,9 @@ filing as an issue.
 1. **Full integration against the qubic.li pool** (colima profile `qubic`,
    VZ+Rosetta): WSS connection ✓, task + Mining Identity assigned ✓, GENERIC
    worker downloaded and running ✓, epoch 234 trainer at ~19 it/s ✓, container
-   `healthy` ✓, clean shutdown ✓.
+   `healthy` ✓, clean shutdown ✓. **Confirmed on the pool dashboard** (worker
+   `mac-mini` Active, 18 H/s, score 3 — see
+   [`docs/assets/pool-worker-active.webp`](assets/pool-worker-active.webp)).
 2. `qiner-mac` compiled natively arm64 (Qiner + AntMiner + tests) with a green
    test suite.
 3. The cross-arch bit-exact validations listed above.
