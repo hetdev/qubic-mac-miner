@@ -156,14 +156,29 @@ reference Qiner protocol.
 ```bash
 ./scripts/qubicminer gpu-selftest                          # bit-exact check (~10 s)
 ./scripts/qubicminer gpu-bench 1024                        # GPU throughput (nonces/s)
-./scripts/qubicminer gpu-mine <node-ip> <signing-seed> <mining-seed-hex> [batch]
+./scripts/qubicminer gpu-mine <node-ip> <mining-id> <signing-seed> <mining-seed-hex> [batch] [flags]
 ```
 
-- **MiningID** = your `QUBIC_ADDRESS` from `.env` (the ranked identity).
-- **signing-seed**: 55-char seed that signs solution broadcasts — its identity
-  must hold QUs for message dissemination and must **not** be the MiningID
-  (same rules as the reference Qiner).
+All arguments are passed directly on the command line (no `.env` needed):
+
+- **mining-id**: 60-char identity whose solutions are ranked.
+- **signing-seed**: 55-char seed (a–z) that signs solution broadcasts — its
+  identity must hold QUs for message dissemination and must **not** be the
+  mining-id (same rules as the reference Qiner).
 - **mining-seed-hex**: 64 hex chars of the epoch mining seed (from your node).
+- **batch**: nonces per GPU batch (default 512; 1024–4096 = max throughput).
+- **flags**: `--selftest` (bit-exact gate before mining) and/or `--bench`
+  (exits after 4 batches).
+
+Example:
+
+```bash
+./scripts/qubicminer gpu-mine 192.168.1.10 \
+  BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK \
+  fwuktnvshpvhvscvmsrscntvkkuprahnvodijgnkcsnqtbftvniadstpoc \
+  8b12add89bc264e01038b61b784e0778a03cd3025e1faeedda6598f197ceccc0 \
+  1024 --selftest
+```
 - Measured: ~23–33 nonces/s on an M4 GPU (**~15x one CPU core, ~5x a 3-thread
   CPU miner**). Like Qiner, mining continues if the node is unreachable
   (submissions are queued and retried).

@@ -383,6 +383,11 @@ int main(int argc, char** argv)
     }
     unsigned char miningSeed[32];
     if (!parseHex32(argv[5], miningSeed)) { fprintf(stderr, "bad MiningSeedHex\n"); return 1; }
+    if (batchSize < 4 || batchSize > 65536)
+    {
+        fprintf(stderr, "batchSize must be 4..65536 (got %lu)\n", (unsigned long)batchSize);
+        return 1;
+    }
 
     // ---- identities (same derivation as Qiner) ----
     unsigned char computorPublicKey[32];

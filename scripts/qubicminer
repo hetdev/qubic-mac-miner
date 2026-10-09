@@ -9,7 +9,7 @@
 #   logs         follow live logs (Ctrl+C to exit)
 #   update       rebuild the image (new client/trainer version)
 #   bench        benchmark of the NATIVE Qiner (ARM64 port) on the canonical task
-#   gpu-mine     GPU solo miner (Metal, Apple GPU) against a Qubic node
+#   gpu-mine     GPU solo miner (Metal): gpu-mine <node-ip> <mining-id> <signing-seed> <mining-seed-hex> [batch]
 #   gpu-bench    GPU throughput benchmark (nonce walks on the Metal kernel)
 #   gpu-selftest GPU bit-exact self-test (golden vector must reproduce)
 #   install-service    install the LaunchAgent (auto-start at login)
@@ -277,12 +277,8 @@ cmd_uninstall_service() {
   c_ok "LaunchAgent removed."
 }
 
-# ---- GPU solo runner (Metal) ----
+# ---- GPU solo runner (Metal) — ALL parameters via CLI, no .env needed ----
 gpu_env() {
-  # MiningID = your public address from .env (solo ranking identity)
-  if [[ -f "$ENV_FILE" ]]; then
-    set -a; source "$ENV_FILE" 2>/dev/null || true; set +a
-  fi
   GPU_DIR="$ROOT/metal"
   GPU_MINER="$GPU_DIR/gpu_miner"
   [[ -x "$GPU_MINER" ]] || { c_bad "Missing $GPU_MINER (build with: cd metal && ./build.sh)"; exit 1; }
@@ -290,19 +286,29 @@ gpu_env() {
 
 cmd_gpu_mine() {
   gpu_env
-  local node_ip="${1:-}"; local signing_seed="${2:-}"; local mining_seed="${3:-}"
-  local batch="${4:-512}"
-  if [[ -z "$node_ip" || -z "$signing_seed" || -z "$mining_seed" ]]; then
-    c_bad "Usage: $0 gpu-mine <node-ip> <signing-seed> <mining-seed-hex> [batch]"
-    c_info "MiningID = QUBIC_ADDRESS from .env. The signing seed signs solution"
-    c_info "broadcasts: its identity must hold QUs and must NOT be the MiningID."
+  local node_ip="${1:-}" mining_id="${2:-}" signing_seed="${3:-}" mining_seed="${4:-}" batch="${5:-512}"
+  if [[ -z "$node_ip" || -z "$mining_id" || -z "$signing_seed" || -z "$mining_seed" ]]; then
+    c_bad "Usage: $0 gpu-mine <node-ip> <mining-id> <signing-seed> <mining-seed-hex> [batch] [flags]"
+    c_info "  node-ip        Qubic node (port 31841); mining continues if unreachable"
+    c_info "  mining-id      60-char identity whose solutions are ranked"
+    c_info "  signing-seed   55-char seed that signs broadcasts (must hold QUs, NOT the mining-id)"
+    c_info "  mining-seed    64 hex chars of the epoch mining seed"
+    c_info "  batch          nonces per GPU batch (default 512; 1024-4096 = max throughput)"
+    c_info "  flags          --selftest (bit-exact gate) | --bench (4 batches then exit)"
     exit 1
   fi
-  local mining_id="${QUBIC_ADDRESS:-}"
-  [[ "$mining_id" =~ ^[A-Z]{60}$ ]] || { c_bad "QUBIC_ADDRESS in .env is not a valid identity"; exit 1; }
+  [[ "$mining_id" =~ ^[A-Z]{60}$ ]] || { c_bad "mining-id must be 60 letters A-Z: '$mining_id'"; exit 1; }
+  [[ "$signing_seed" =~ ^[a-z]{55}$ ]] || { c_bad "signing-seed must be 55 lowercase letters a-z"; exit 1; }
+  [[ "$mining_seed" =~ ^[0-9a-fA-F]{64}$ ]] || { c_bad "mining-seed must be 64 hex chars"; exit 1; }
+  if ! [[ "$batch" =~ ^[0-9]+$ ]] || (( batch < 4 )); then
+    c_bad "batch must be a number >= 4 (got '$batch')"; exit 1
+  fi
+  local extra=()
+  if [[ $# -gt 5 ]]; then shift 5; extra=("$@"); fi
   c_info "GPU solo miner | node $node_ip | batch $batch | MiningID ${mining_id:0:6}..."
   cd "$GPU_DIR"
-  ./gpu_miner "$node_ip" 31841 "$mining_id" "$signing_seed" "$mining_seed"       ../qiner-mac/test/data/bpp9000.task "$batch"
+  ./gpu_miner "$node_ip" 31841 "$mining_id" "$signing_seed" "$mining_seed" \
+      ../qiner-mac/test/data/bpp9000.task "$batch" ${extra[@]+"${extra[@]}"}
 }
 
 cmd_gpu_bench() {
@@ -329,7 +335,7 @@ case "${1:-help}" in
   logs)    cmd_logs ;;
   update)  cmd_update ;;
   bench)   shift || true; cmd_bench "${1:-}" "${2:-}" ;;
-  gpu-mine)     shift || true; cmd_gpu_mine "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
+  gpu-mine)     shift || true; cmd_gpu_mine "$@" ;;
   gpu-bench)    shift || true; cmd_gpu_bench "${1:-}" ;;
   gpu-selftest) cmd_gpu_selftest ;;
   install-service) cmd_install_service ;;
