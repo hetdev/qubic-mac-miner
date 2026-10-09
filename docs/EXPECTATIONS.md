@@ -9,11 +9,9 @@ machine.
 - The current algorithm (**bpp9000**) is a search over a recurrent ternary
   network: each nonce simulates the network with up to 1,000 mutations and
   rollouts of a 8,760-emission window.
-- **Measured on this Mac (M-series, 4P+6E cores, 4 threads)**: ~**7 it/s**
-  sustained (2,156 nonces in 280 s ≈ 1.9 nonces/s per thread). Most nonces are
-  fast (~0.5 s); nonces that "master" frames slide the window and can take
-  **minutes** (the golden test sample took ~2.5 min). The average is what you
-  see in it/s.
+- **Measured on this Mac (M-series, 4P+6E cores)**: a full nonce walk takes
+  **0.4–0.8 s per core**; with 4 threads that is ~**7 it/s** sustained
+  (2,156 nonces in 280 s ≈ 1.9 nonces/s per thread).
 - The **pool** (Phase 1) is the only route with realistic payouts: in **PPS**
   mode you are paid per iteration. **Measured on this Mac: ~19 it/s** with 3
   threads (GENERIC x64 worker under Rosetta in the VM; ≈70–90 % of native x64).
@@ -105,6 +103,17 @@ filing as an issue.
   but their AVX2 trainer dies with SIGBUS under Rosetta and `SKYLAKE` is gated
   by a CPUID signature check; their site announces Apple Silicon "coming soon".
   Works natively on Intel Macs. Integration (`QUBIC_POOL=jetski`) is ready.
+
+## Metal / Apple GPU (experimental PoC)
+
+`metal/` contains a clean-room Metal implementation of the bpp9000 nonce walk,
+validated **bit-exact** against the CPU reference (golden 4811 included).
+Measured on Apple M4: the naive "one thread per walk" pattern plateaus at
+**~8 nonces/s** (≈1.2x the 3-thread CPU miner) — the walk is serial and
+memory-bandwidth bound. The official CUDA trainer avoids this with batched
+candidate evaluation (its kernel inventory proves it); that redesign is the
+realistic path to a competitive Metal trainer. Details and roadmap:
+[`metal/README.md`](../metal/README.md).
 
 ## What this project is NOT
 

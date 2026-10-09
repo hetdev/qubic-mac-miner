@@ -19,3 +19,6 @@ qiner-mac/build-macos/probe_id*
 
 # nested repo backup (local history of the qiner-mac fork)
 /qiner-mac/.git.nested/
+
+# Metal PoC build output
+metal/metal_bench
