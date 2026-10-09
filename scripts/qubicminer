@@ -5,6 +5,7 @@
 #   start        start the pool (Docker + official qli-Client or jetski)
 #   stop         stop the miner (clean shutdown)
 #   status       container state, latest it/s and resource usage
+#   watch        LIVE dashboard (refreshing status, it/s, CPU/mem; Ctrl+C to exit)
 #   logs         follow live logs (Ctrl+C to exit)
 #   update       rebuild the image (new client/trainer version)
 #   bench        benchmark of the NATIVE Qiner (ARM64 port) on the canonical task
@@ -137,6 +138,8 @@ image_exists() {
 }
 
 cmd_start() {
+  local follow=false
+  if [[ "${1:-}" == "--follow" ]]; then follow=true; fi
   load_env
   power_guard
   docker_ok
@@ -150,7 +153,12 @@ cmd_start() {
     c_bad "The container never became healthy; check:  $0 logs"
     exit 1
   }
-  c_ok "Miner running. Logs:  $0 logs"
+  if $follow; then
+    c_ok "Miner running - following logs (Ctrl+C to stop watching; the miner keeps running)"
+    docker logs -f --tail 50 qubic-miner
+  else
+    c_ok "Miner running. Watch it live:  $0 watch   |  Logs:  $0 logs"
+  fi
 }
 
 # Pool profile without requiring a full .env (stop must always work)
@@ -194,6 +202,28 @@ cmd_logs() {
   docker_ok
   # Logs straight from the container: same name for every pool
   docker logs -f --tail 100 qubic-miner
+}
+
+cmd_watch() {
+  pool_profile_only
+  docker_ok
+  trap 'printf "\n%s\n" "watch stopped."; exit 0' INT
+  while true; do
+    printf '\033[2J[H'   # clear + home
+    printf '\033[1;34m=== qubicminer - live dashboard ===\033[0m  %s   (Ctrl+C to exit)\n\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "--- Container ---"
+    docker ps -a --filter name=qubic-miner --format '  {{.Names}}  {{.Status}}  (up {{.RunningFor}})' 2>/dev/null || echo "  docker unavailable"
+    echo
+    echo "--- Mining (it/s) ---"
+    docker logs qubic-miner 2>&1 | grep -Ei 'it/s|SHARES' | tail -n 3 | sed 's/^/  /' || echo "  (no logs yet)"
+    echo
+    echo "--- Resources ---"
+    docker stats --no-stream --format '  {{.Name}}  CPU {{.CPUPerc}}  MEM {{.MemUsage}}' qubic-miner 2>/dev/null || true
+    echo
+    echo "--- Power ---"
+    pmset -g batt 2>/dev/null | head -2 | sed 's/^/  /'
+    sleep 2
+  done
 }
 
 cmd_update() {
@@ -292,9 +322,10 @@ cmd_gpu_selftest() {
 }
 
 case "${1:-help}" in
-  start)   cmd_start ;;
+  start)   shift || true; cmd_start "${1:-}" ;;
   stop)    cmd_stop ;;
   status)  cmd_status ;;
+  watch)   cmd_watch ;;
   logs)    cmd_logs ;;
   update)  cmd_update ;;
   bench)   shift || true; cmd_bench "${1:-}" "${2:-}" ;;

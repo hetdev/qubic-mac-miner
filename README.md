@@ -68,10 +68,12 @@ used (address only).
 ### 3. Start
 
 ```bash
-./scripts/qubicminer start     # starts the pool (first run: builds the image)
-./scripts/qubicminer status    # container state, it/s and resource usage
-./scripts/qubicminer logs      # live logs
-./scripts/qubicminer stop      # clean shutdown
+./scripts/qubicminer start          # starts the pool (first run: builds the image)
+./scripts/qubicminer start --follow # ...and stays attached, streaming output
+./scripts/qubicminer watch          # LIVE dashboard (status, it/s, CPU/mem; Ctrl+C)
+./scripts/qubicminer status         # one-shot state, it/s and resource usage
+./scripts/qubicminer logs           # live logs
+./scripts/qubicminer stop           # clean shutdown
 ```
 
 Check your worker at <https://pool.qubic.li> (log in with your address).
