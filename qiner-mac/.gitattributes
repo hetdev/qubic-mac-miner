@@ -1,0 +1,21 @@
+# Repo stores text as LF. Working tree gets native EOL:
+# CRLF on Windows, LF on Linux/macOS (via default core.eol=native).
+* text=auto
+
+# Be explicit for source so intent is clear regardless of Git's autodetect.
+*.h    text
+*.hpp  text
+*.cpp  text
+*.c    text
+*.txt  text
+*.md   text
+.clang-format text
+.clang-tidy   text
+.gitignore    text
+.gitattributes text
+
+# Visual Studio project files: pin to CRLF on every platform (VS prefers it).
+*.sln     text eol=crlf
+*.vcxproj text eol=crlf
+*.filters text eol=crlf
+

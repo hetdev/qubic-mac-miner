@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>li.qubic.miner</string>
+
+    <!-- Starts the miner at login. The long-lived process is supervised by
+         Docker (restart: unless-stopped); launchd only triggers the start and
+         makes sure docker/colima is available. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__ROOT__/scripts/qubicminer</string>
+        <string>start</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__ROOT__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- If the start fails (e.g. docker not ready yet), retry every 90s -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>ThrottleInterval</key>
+        <integer>90</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__ROOT__/runtime/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__ROOT__/runtime/launchd.err.log</string>
+</dict>
+</plist>

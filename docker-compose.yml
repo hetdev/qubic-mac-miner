@@ -1,0 +1,93 @@
+# ============================================================================
+# Qubic Mac Miner — pool services.
+# The active pool is decided by QUBIC_POOL in .env (qli | jetski); the CLI
+# exports COMPOSE_PROFILES accordingly. Only ONE runs at a time (both use the
+# container_name qubic-miner so status/logs work the same way).
+# ============================================================================
+
+services:
+  qli-client:
+    profiles: ["qli"]
+    # ============================================================
+    # WHY linux/amd64 + Rosetta:
+    # The qubic.li pool pushes an Android worker (interpreter
+    # /system/bin/linker64, bionic libc) to Linux ARM64 clients that can
+    # never run on glibc Linux — open upstream bug:
+    # github.com/qubic-li/client/issues/136.
+    # The x64 worker IS a proper glibc Linux build, so this stack runs
+    # x86_64 translated by Rosetta inside the colima VM ("qubic" profile,
+    # vm-type vz + --vz-rosetta): ~70-90% of native speed. When issue #136
+    # is fixed, go back to QLI_ARCH=arm64 + platform linux/arm64.
+    # ============================================================
+    platform: linux/amd64
+    # The image is built with `docker build` (scripts/qubicminer) because the
+    # classic builder of standalone docker-compose trips over Docker 29's
+    # image store. See docker/Dockerfile.
+    image: qubic-mac-miner/qli-client:3.9.1-x64-rosetta
+    container_name: qubic-miner
+    restart: unless-stopped
+    environment:
+      # Public address that receives payouts (REQUIRED; never the seed)
+      ClientSettings__QubicAddress: "${QUBIC_ADDRESS:?Set QUBIC_ADDRESS in .env (cp .env.example .env)}"
+      ClientSettings__Alias: "${QUBIC_ALIAS:-}"
+      # Pool endpoint (the official QLI one by default; allows compatible pools)
+      ClientSettings__PoolAddress: "${QUBIC_POOL_URL:-wss://wps.qubic.li/ws}"
+      # CPU only
+      ClientSettings__Trainer__Cpu: "true"
+      ClientSettings__Trainer__Gpu: "false"
+      ClientSettings__Trainer__CpuThreads: "${QUBIC_THREADS:-0}"
+      # GENERIC = x64 worker without special instructions (AVX2/AVX512 is not
+      # guaranteed under Rosetta translation)
+      ClientSettings__Trainer__CpuVersion: "GENERIC"
+      # PPS = pay per iteration (recommended on Macs); false = solo
+      ClientSettings__pps: "${QUBIC_PPS:-true}"
+      # JWT token from the platform.qubic.li panel (optional in registerless mode)
+      ClientSettings__AccessToken: "${QUBIC_TOKEN:-}"
+      # Trainer auto-update disabled: updates happen by rebuilding the image
+      ClientSettings__autoUpdate: "false"
+    # Optional container memory cap (uncomment to enable):
+    # mem_limit: 4g
+    healthcheck:
+      # debian:bookworm-slim has no `ps`; the client is PID 1, so checking
+      # /proc/1/cmdline is enough (grep IS in the image).
+      test: ["CMD-SHELL", "grep -q qli-Client /proc/1/cmdline"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  jetski-client:
+    profiles: ["jetski"]
+    # Alternative pool jetskipool.ai (PPLNS / Solo) with its own client.
+    # Official amd64 image → runs under the same Rosetta VM ("qubic").
+    # No token used: public address only. Dashboard: qubic.jetskipool.ai
+    platform: linux/amd64
+    image: jetskipool/miner:qubjetski
+    container_name: qubic-miner
+    restart: unless-stopped
+    command:
+      - "${QUBIC_JETSKI_MODE:---pplns}"
+      - "-w"
+      - "${QUBIC_ADDRESS:?Set QUBIC_ADDRESS in .env (cp .env.example .env)}"
+      - "--workername"
+      - "${QUBIC_ALIAS:-mac-miner}"
+      - "--cpu"
+      - "--threads"
+      - "${QUBIC_THREADS:-3}"
+    healthcheck:
+      # The jetski client is PID 1 of its image
+      test: ["CMD-SHELL", "grep -qiE 'jetski|client' /proc/1/cmdline"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

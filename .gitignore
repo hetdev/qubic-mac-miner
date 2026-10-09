@@ -1,0 +1,21 @@
+# Local settings (never commit)
+.env
+runtime/
+
+# bin/docker es un symlink machine-specific al Cellar de Homebrew
+/bin/
+
+# Binarios y cachés grandes
+docker/qli-cache/*.tar.gz
+qiner-mac/build*/
+qiner-mac/build-macos/probe_gt
+qiner-mac/build-macos/probe_id*
+
+# macOS
+.DS_Store
+
+# qiner-mac keeps its own nested git repo locally; its FILES are tracked here
+/qiner-mac/.git/
+
+# nested repo backup (local history of the qiner-mac fork)
+/qiner-mac/.git.nested/

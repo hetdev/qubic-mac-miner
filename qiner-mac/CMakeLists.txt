@@ -1,0 +1,66 @@
+cmake_minimum_required(VERSION 3.21)
+project(Qiner LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+
+if(CMAKE_CMAKE_BUILD_TYPE MATCHES DEBUG)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g")
+endif()
+
+# Additional cmake flags
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    # RDRAND/BMI are x86-only. On other targets (e.g. Apple Silicon / ARM64)
+    # the portable shims in src/portable_rng.h replace the intrinsics.
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i386|i686)$")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mrdrnd -mbmi")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mrdrnd -mbmi")
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+else()
+    message(FATAL "Unsupported compiler.")
+endif()
+
+# Compiled output
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# Options
+OPTION(BUILD_TOOLS "Build Qiner tools" OFF)
+
+# Main executable
+add_executable(${PROJECT_NAME} src/Qiner.cpp src/keyUtils.cpp)
+
+include_directories(${PROJECT_NAME} ./src)
+
+# Linking
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
+    target_link_libraries(${PROJECT_NAME} wsock32 ws2_32)
+else()
+    target_link_libraries(${PROJECT_NAME} pthread)
+endif()
+
+# Ant colony reference miner
+add_executable(AntMiner src/ant/AntMiner.cpp src/keyUtils.cpp)
+
+target_include_directories(AntMiner
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/ant)
+
+if(WIN32)
+    target_compile_definitions(AntMiner PRIVATE NOMINMAX)
+    target_link_libraries(AntMiner wsock32 ws2_32)
+else()
+    target_link_libraries(AntMiner pthread)
+endif()
+
+# Other projects
+add_subdirectory(test)
+if (BUILD_TOOLS)
+    message(STATUS "Enable build Qiner tools.")
+    add_subdirectory(tools)
+endif()
