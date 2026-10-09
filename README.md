@@ -144,6 +144,32 @@ cd qiner-mac
 ./scripts/qubicminer bench 4 300   # 4 threads, 5 min
 ```
 
+## GPU solo runner (Metal, experimental)
+
+`metal/gpu_miner` mines the same bpp9000 walk **on the Apple GPU** with the
+bit-exact Metal kernel (validated: golden 4811 reproduces; `gpu-selftest`
+re-checks it at startup) and submits solutions to a Qubic node using the
+reference Qiner protocol.
+
+```bash
+./scripts/qubicminer gpu-selftest                          # bit-exact check (~10 s)
+./scripts/qubicminer gpu-bench 1024                        # GPU throughput (nonces/s)
+./scripts/qubicminer gpu-mine <node-ip> <signing-seed> <mining-seed-hex> [batch]
+```
+
+- **MiningID** = your `QUBIC_ADDRESS` from `.env` (the ranked identity).
+- **signing-seed**: 55-char seed that signs solution broadcasts — its identity
+  must hold QUs for message dissemination and must **not** be the MiningID
+  (same rules as the reference Qiner).
+- **mining-seed-hex**: 64 hex chars of the epoch mining seed (from your node).
+- Measured: ~23–33 nonces/s on an M4 GPU (**~15x one CPU core, ~5x a 3-thread
+  CPU miner**). Like Qiner, mining continues if the node is unreachable
+  (submissions are queued and retried).
+
+For **pool payouts** with the GPU, see `metal/README.md` — the pool worker
+protocol is closed; the Metal kernel is offered upstream on
+[qubic-li/client#136](https://github.com/qubic-li/client/issues/136).
+
 ---
 
 ## Security

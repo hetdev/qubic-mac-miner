@@ -8,6 +8,9 @@
 #   logs         follow live logs (Ctrl+C to exit)
 #   update       rebuild the image (new client/trainer version)
 #   bench        benchmark of the NATIVE Qiner (ARM64 port) on the canonical task
+#   gpu-mine     GPU solo miner (Metal, Apple GPU) against a Qubic node
+#   gpu-bench    GPU throughput benchmark (nonce walks on the Metal kernel)
+#   gpu-selftest GPU bit-exact self-test (golden vector must reproduce)
 #   install-service    install the LaunchAgent (auto-start at login)
 #   uninstall-service  remove the LaunchAgent
 #
@@ -244,6 +247,50 @@ cmd_uninstall_service() {
   c_ok "LaunchAgent removed."
 }
 
+# ---- GPU solo runner (Metal) ----
+gpu_env() {
+  # MiningID = your public address from .env (solo ranking identity)
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a; source "$ENV_FILE" 2>/dev/null || true; set +a
+  fi
+  GPU_DIR="$ROOT/metal"
+  GPU_MINER="$GPU_DIR/gpu_miner"
+  [[ -x "$GPU_MINER" ]] || { c_bad "Missing $GPU_MINER (build with: cd metal && ./build.sh)"; exit 1; }
+}
+
+cmd_gpu_mine() {
+  gpu_env
+  local node_ip="${1:-}"; local signing_seed="${2:-}"; local mining_seed="${3:-}"
+  local batch="${4:-512}"
+  if [[ -z "$node_ip" || -z "$signing_seed" || -z "$mining_seed" ]]; then
+    c_bad "Usage: $0 gpu-mine <node-ip> <signing-seed> <mining-seed-hex> [batch]"
+    c_info "MiningID = QUBIC_ADDRESS from .env. The signing seed signs solution"
+    c_info "broadcasts: its identity must hold QUs and must NOT be the MiningID."
+    exit 1
+  fi
+  local mining_id="${QUBIC_ADDRESS:-}"
+  [[ "$mining_id" =~ ^[A-Z]{60}$ ]] || { c_bad "QUBIC_ADDRESS in .env is not a valid identity"; exit 1; }
+  c_info "GPU solo miner | node $node_ip | batch $batch | MiningID ${mining_id:0:6}..."
+  cd "$GPU_DIR"
+  ./gpu_miner "$node_ip" 31841 "$mining_id" "$signing_seed" "$mining_seed"       ../qiner-mac/test/data/bpp9000.task "$batch"
+}
+
+cmd_gpu_bench() {
+  gpu_env
+  local n="${1:-1024}"
+  cd "$GPU_DIR"
+  ./metal_bench bench "$n"
+}
+
+cmd_gpu_selftest() {
+  gpu_env
+  cd "$GPU_DIR"
+  ./gpu_miner 127.0.0.1 31841 BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK \
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      0000000000000000000000000000000000000000000000000000000000000000 \
+      ../qiner-mac/test/data/bpp9000.task 4 --selftest --bench
+}
+
 case "${1:-help}" in
   start)   cmd_start ;;
   stop)    cmd_stop ;;
@@ -251,6 +298,9 @@ case "${1:-help}" in
   logs)    cmd_logs ;;
   update)  cmd_update ;;
   bench)   shift || true; cmd_bench "${1:-}" "${2:-}" ;;
+  gpu-mine)     shift || true; cmd_gpu_mine "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
+  gpu-bench)    shift || true; cmd_gpu_bench "${1:-}" ;;
+  gpu-selftest) cmd_gpu_selftest ;;
   install-service) cmd_install_service ;;
   uninstall-service) cmd_uninstall_service ;;
   *) sed -n '2,18p' "$0"; exit 1 ;;
