@@ -111,8 +111,9 @@ validated **bit-exact** against the CPU reference (golden 4811 included).
 Measured on Apple M4: the naive "one thread per walk" pattern plateaus at
 ~8 nonces/s, but the SIMT mapping that preserves reference semantics (one
 32-lane simdgroup per walk, 64-neuron tick step across lanes, threadgroup-
-memory state) reaches **~28 nonces/s ≈ 13x one CPU core and ~4.3x the 3-thread
-CPU pool miner**. Details, kernel history and roadmap:
+memory state, then 4 walks per threadgroup) reaches **~33 nonces/s ≈ 15x one
+CPU core and ~5x the 3-thread CPU pool miner**. Details, kernel history and
+roadmap:
 [`metal/README.md`](../metal/README.md).
 
 ## What this project is NOT

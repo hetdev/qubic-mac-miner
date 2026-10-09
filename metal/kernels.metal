@@ -411,3 +411,225 @@ kernel void bppWalkSimd(
 
     if (lane == 0) outRating[gid] = best;
 }
+
+// ============================================================================
+// v3: 4 walks per threadgroup — better threadgroup-memory packing.
+//
+// Same bit-exact walk as v2, but:
+//  - WALKS_PER_GROUP simdgroups share one threadgroup (4 x 6.7 KB = 26.8 KB of
+//    the 32 KB TG budget, vs 6.7 KB wasted-per-slot in v2),
+//  - accept/rollback/best decisions live in shared TG scalars so ALL lanes can
+//    cooperate on the state copies (v2 did them serially on lane 0),
+//  - simdgroup_barrier instead of threadgroup_barrier (walks are independent).
+// ============================================================================
+
+constant uint WALKS_PER_GROUP = 4;
+
+struct TGState4
+{
+    uchar  curLut[LUT_TOTAL];
+    uchar  curInit[POPULATION];
+    ushort curNeigh[LINKS];
+    uchar  prevLut[LUT_TOTAL];
+    uchar  prevInit[POPULATION];
+    ushort prevNeigh[LINKS];
+    uchar  bestLut[LUT_TOTAL];
+    uchar  bestInit[POPULATION];
+    ushort bestNeigh[LINKS];
+    uchar  neuronA[POPULATION];
+    uchar  neuronB[POPULATION];
+    uint   counter;
+    uint   failures;
+    ulong  ticks;
+    ulong  shift;
+    uint   pendingShift;
+    // shared walk scalars (all lanes of the slot read them)
+    uint   curErr;
+    uint   curShiftV;
+    uint   bestErr;
+    uint   bestShiftV;
+    uint   accepted;
+    uint   takeBest;
+};
+
+kernel void bppWalkSimd4(
+    constant uchar*  target      [[buffer(0)]],
+    constant uchar*  rootLut     [[buffer(1)]],
+    constant uchar*  rootStart   [[buffer(2)]],
+    constant ushort* rootNeigh   [[buffer(3)]],
+    constant ulong*  seeds       [[buffer(4)]],
+    constant uint*   nonceParams [[buffer(5)]],
+    constant WalkParams& shared  [[buffer(6)]],
+    device uint2*    outRating   [[buffer(8)]],
+    threadgroup uchar* tgRaw     [[threadgroup(0)]],
+    uint gidTg [[threadgroup_position_in_grid]],
+    uint tid   [[thread_position_in_threadgroup]])
+{
+    threadgroup TGState4* all = (threadgroup TGState4*)tgRaw;
+    const uint slot = tid / 32;          // which walk in this threadgroup
+    const uint lane = tid % 32;          // simdgroup lane
+    threadgroup TGState4& st = all[slot];
+
+    const uint myIdx = gidTg * WALKS_PER_GROUP + slot;
+    const uint L    = nonceParams[myIdx * 2 + 0];
+    const uint mode = nonceParams[myIdx * 2 + 1];
+    constant ulong* mySeeds = seeds + (ulong)myIdx * (MUTATIONS * MAX_L);
+    const uint controlIndex = shared.controlIndex;
+    const uint outputIndex  = shared.outputIndex;
+
+    // applyRootMaterial()
+    for (uint i = lane; i < LUT_TOTAL; i += 32) st.curLut[i] = rootLut[i];
+    for (uint n = lane; n < POPULATION; n += 32) st.curInit[n] = rootStart[n];
+    for (uint i = lane; i < LINKS; i += 32) st.curNeigh[i] = rootNeigh[i];
+    if (lane == 0) { st.counter = 0; st.failures = 0; st.ticks = 0; st.shift = 0; }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    #define S4_SCORE_FRAME() do {                                          \
+        for (uint n = lane; n < POPULATION; n += 32) st.neuronA[n] = st.curInit[n]; \
+        if (lane == 0) { st.counter = 0; st.failures = 0; st.ticks = 0; }   \
+        simdgroup_barrier(mem_flags::mem_threadgroup);                      \
+        threadgroup uchar* src = st.neuronA;                                \
+        threadgroup uchar* dst = st.neuronB;                                \
+        while (st.counter < st.shift + WINDOW_WIDTH)                        \
+        {                                                                   \
+            if (lane == 0)                                                  \
+            {                                                               \
+                ++st.ticks;                                                 \
+                if (st.ticks >= MAX_TICKS) st.failures = INFINITE_ERROR;    \
+            }                                                               \
+            simdgroup_barrier(mem_flags::mem_threadgroup);                  \
+            if (st.failures == INFINITE_ERROR) break;                       \
+            for (uint k = 0; k < POPULATION / 32; ++k)                      \
+            {                                                               \
+                const uint n = lane + 32 * k;                               \
+                const uchar t0 = src[st.curNeigh[n * NEIGHBORS + 0]];       \
+                const uchar t1 = src[st.curNeigh[n * NEIGHBORS + 1]];       \
+                const uchar t2 = src[st.curNeigh[n * NEIGHBORS + 2]];       \
+                dst[n] = st.curLut[n * LUT_SIZE + (uint)(t0 + 3 * t1 + 9 * t2)]; \
+            }                                                               \
+            simdgroup_barrier(mem_flags::mem_threadgroup);                  \
+            if (dst[controlIndex] != 2)                                     \
+            {                                                               \
+                if (lane == 0)                                              \
+                {                                                           \
+                    if (st.counter >= st.shift &&                           \
+                        dst[outputIndex] != target[st.counter])             \
+                        ++st.failures;                                      \
+                    ++st.counter;                                           \
+                }                                                           \
+            }                                                               \
+            simdgroup_barrier(mem_flags::mem_threadgroup);                  \
+            threadgroup uchar* tmp = src; src = dst; dst = tmp;             \
+        }                                                                   \
+    } while (0)
+
+    #define S4_ADVANCE() do {                                              \
+        for (;;)                                                           \
+        {                                                                  \
+            S4_SCORE_FRAME();                                              \
+            if (st.failures == INFINITE_ERROR || st.failures > ADVANCE_THR) break; \
+            if (st.shift == SHIFT_CAP) break;                              \
+            if (lane == 0) ++st.shift;                                     \
+            simdgroup_barrier(mem_flags::mem_threadgroup);                 \
+        }                                                                  \
+    } while (0)
+
+    // ---- walk: computeScoreFromCurrent(L, 0, mode) ----
+    S4_ADVANCE();
+    if (lane == 0)
+    {
+        st.curErr = st.failures; st.curShiftV = (uint)st.shift;
+        st.bestErr = st.failures; st.bestShiftV = (uint)st.shift;
+    }
+    tgCopyLut(st.bestLut, st.curLut, lane);
+    tgCopyInit(st.bestInit, st.curInit, lane);
+    tgCopyNeigh(st.bestNeigh, st.curNeigh, lane);
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint s = 0; s < MUTATIONS; ++s)
+    {
+        // snapshotPrev()
+        tgCopyLut(st.prevLut, st.curLut, lane);
+        tgCopyInit(st.prevInit, st.curInit, lane);
+        tgCopyNeigh(st.prevNeigh, st.curNeigh, lane);
+        if (lane == 0)
+        {
+            st.pendingShift = (uint)st.shift;
+            st.accepted = 0;
+            st.takeBest = 0;
+            for (uint i = 0; i < L; ++i)
+            {
+                const ulong v = mySeeds[s * MAX_L + i];
+                if (mode == 1)
+                {
+                    const uchar d = (uchar)(v & 1ULL);
+                    const uint nn = (uint)((v >> 1) % POPULATION);
+                    st.curInit[nn] = (uchar)((st.curInit[nn] + 1 + d) % 3);
+                }
+                else if (mode == 2)
+                {
+                    const uint slotv = (uint)(v % LINKS);
+                    uint tgt = (uint)((v / LINKS) % POPULATION);
+                    const uint prev = st.curNeigh[slotv];
+                    while (tgt == prev) tgt = (tgt + 1) % POPULATION;
+                    st.curNeigh[slotv] = (ushort)tgt;
+                }
+                else
+                {
+                    const uchar d = (uchar)(v & 1ULL);
+                    const uint idx = (uint)((v >> 1) % LUT_TOTAL);
+                    st.curLut[idx] = (uchar)((st.curLut[idx] + 1 + d) % 3);
+                }
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        S4_ADVANCE();
+
+        // accept-if-not-worse (decision on lane 0, shared via TG scalars)
+        if (lane == 0)
+        {
+            const uint2 r = uint2(st.failures, (uint)st.shift);
+            const uint2 cur = uint2(st.curErr, st.curShiftV);
+            if (ratingValid(r) && isNotWorse(r, cur))
+            {
+                st.curErr = r.x; st.curShiftV = r.y;
+                st.accepted = 1;
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        // rejected -> rollback + shift restore (all lanes cooperate)
+        if (st.accepted == 0)
+        {
+            tgCopyLut(st.curLut, st.prevLut, lane);
+            tgCopyInit(st.curInit, st.prevInit, lane);
+            tgCopyNeigh(st.curNeigh, st.prevNeigh, lane);
+            if (lane == 0) st.shift = st.pendingShift;
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        // keep-if-not-worse best
+        if (lane == 0)
+        {
+            const uint2 cur = uint2(st.curErr, st.curShiftV);
+            const uint2 best = uint2(st.bestErr, st.bestShiftV);
+            if (ratingValid(cur) && isNotWorse(cur, best))
+            {
+                st.bestErr = cur.x; st.bestShiftV = cur.y;
+                st.takeBest = 1;
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (st.takeBest == 1)
+        {
+            tgCopyLut(st.bestLut, st.curLut, lane);
+            tgCopyInit(st.bestInit, st.curInit, lane);
+            tgCopyNeigh(st.bestNeigh, st.curNeigh, lane);
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (lane == 0) outRating[myIdx] = uint2(st.bestErr, st.bestShiftV);
+}

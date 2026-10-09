@@ -11,7 +11,8 @@ Apple GPU?**
 |---|---|
 | Correctness | ✅ **Bit-exact** vs the CPU reference (golden error=4811 + 2 random cases match exactly), for BOTH kernels |
 | v1 naive (1 GPU thread = 1 full walk) | ⚠️ 2.1 nonces/s @256 → 8.3 @1024 → 8.0 @4096 (memory-bandwidth plateau) |
-| **v2 SIMD (1 simdgroup = 1 walk)** | ✅ **24.7 nonces/s @256, 27.7 @1024 — 13x one CPU core, ~4.3x the 3-thread CPU pool miner** |
+| **v2 SIMD (1 simdgroup = 1 walk)** | ✅ 24.7 @256, 27.7 @1024 — 13x one CPU core |
+| **v3 (4 walks per threadgroup)** | ✅ **30.8 @1024, 33.4 @4096 — 15x one CPU core, ~5x the 3-thread CPU pool miner** |
 | CPU reference | 2.1 nonces/s per core (0.4–0.8 s per walk) |
 
 **Conclusion**: the algorithm ports to Metal perfectly (pure integer math) and
@@ -26,8 +27,14 @@ memory and ping-pong neuron buffers.
   bit-exactness of the port; memory-bound, ~8 nonces/s ceiling.
 - **v2 `bppWalkSimd`** — one simdgroup (32 lanes) per walk; lanes cooperate on
   the 64 neurons per tick; threadgroup-memory state; ~28 nonces/s.
-- Remaining headroom: pack several walks per threadgroup (26 KB of the 32 KB
-  TG budget), parallelize the rollback/best copies, wider batches.
+- **v3 `bppWalkSimd4`** — 4 walks per threadgroup (27 KB of the 32 KB TG
+  budget), shared accept/rollback/best decisions so all lanes cooperate on
+  state copies, simdgroup barriers; **33.4 nonces/s @4096 — 15x one CPU core**.
+- Remaining headroom: wider batches, NEON-style preprocessing of seeds,
+  GPU-side K12/random2 (removes the CPU staging).
+- The result was posted upstream on
+  [qubic-li/client#136](https://github.com/qubic-li/client/issues/136#issuecomment-6089967606)
+  offering the Metal worker for official integration.
 
 ## What the official CUDA trainer actually does
 

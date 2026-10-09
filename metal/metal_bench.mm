@@ -72,6 +72,36 @@ struct TGStateCPP
 };
 static_assert(sizeof(TGStateCPP) == 6688, "TGState layout must match kernels.metal");
 
+// Must mirror metal::TGState4 (v3) — TGState + shared walk scalars.
+struct TGState4CPP
+{
+    unsigned char  curLut[1728];
+    unsigned char  curInit[64];
+    uint16_t       curNeigh[192];
+    unsigned char  prevLut[1728];
+    unsigned char  prevInit[64];
+    uint16_t       prevNeigh[192];
+    unsigned char  bestLut[1728];
+    unsigned char  bestInit[64];
+    uint16_t       bestNeigh[192];
+    unsigned char  neuronA[64];
+    unsigned char  neuronB[64];
+    uint32_t       counter;
+    uint32_t       failures;
+    uint64_t       ticks;
+    uint64_t       shift;
+    uint32_t       pendingShift;
+    uint32_t       curErr;
+    uint32_t       curShiftV;
+    uint32_t       bestErr;
+    uint32_t       bestShiftV;
+    uint32_t       accepted;
+    uint32_t       takeBest;
+};
+static_assert(sizeof(TGState4CPP) == 6712, "TGState4 layout must match kernels.metal");
+
+static constexpr uint32_t WALKS_PER_GROUP = 4;
+
 struct WalkParamsCPP
 {
     uint32_t controlIndex;
@@ -133,7 +163,7 @@ static bool initMetal(MetalCtx& ctx, const std::string& kernelPath)
     NSError* err = nil;
     id<MTLLibrary> lib = [ctx.device newLibraryWithSource:src options:nil error:&err];
     if (!lib) { fprintf(stderr, "MSL compile error: %s\n", err.localizedDescription.UTF8String); return false; }
-    id<MTLFunction> fn = [lib newFunctionWithName:@"bppWalkSimd"];
+    id<MTLFunction> fn = [lib newFunctionWithName:@"bppWalkSimd4"];
     ctx.pipe = [ctx.device newComputePipelineStateWithFunction:fn error:&err];
     if (!ctx.pipe) { fprintf(stderr, "Pipeline error: %s\n", err.localizedDescription.UTF8String); return false; }
     return true;
@@ -153,14 +183,20 @@ gpuWalks(MetalCtx& ctx, const unsigned char* target,
          const std::vector<GpuInput>& inputs, uint32_t controlIndex, uint32_t outputIndex)
 {
     const NSUInteger n = inputs.size();
+    const NSUInteger nPadded = ((n + 3) / 4) * 4;   // 4 walks per threadgroup
 
     id<MTLBuffer> bTarget = [ctx.device newBufferWithBytes:target length:8928 options:MTLResourceStorageModeShared];
     id<MTLBuffer> bLut    = [ctx.device newBufferWithBytes:inputs[0].lut.data()   length:1728 options:MTLResourceStorageModeShared];
     id<MTLBuffer> bStart  = [ctx.device newBufferWithBytes:inputs[0].start.data() length:64   options:MTLResourceStorageModeShared];
     id<MTLBuffer> bNeigh  = [ctx.device newBufferWithBytes:inputs[0].neigh.data() length:384  options:MTLResourceStorageModeShared];
 
-    std::vector<unsigned long long> seeds(n * SEEDS_PER_NONCE);
-    std::vector<uint32_t> params(n * 2);
+    std::vector<unsigned long long> seeds(nPadded * SEEDS_PER_NONCE, 0);
+    std::vector<uint32_t> params(nPadded * 2, 0);
+    for (NSUInteger i = 0; i < nPadded; ++i)
+    {
+        params[i * 2 + 0] = 1;   // padded slots: harmless walk (L=1, mode=1)
+        params[i * 2 + 1] = 1;
+    }
     for (NSUInteger i = 0; i < n; ++i)
     {
         memcpy(&seeds[i * SEEDS_PER_NONCE], inputs[i].seeds.data(), SEEDS_PER_NONCE * sizeof(unsigned long long));
@@ -174,7 +210,7 @@ gpuWalks(MetalCtx& ctx, const unsigned char* target,
     id<MTLBuffer> bShared = [ctx.device newBufferWithBytes:&wp length:sizeof(wp) options:MTLResourceStorageModeShared];
 
     id<MTLBuffer> bState = [ctx.device newBufferWithLength:n * sizeof(WalkStateCPP) options:MTLResourceStorageModeShared];
-    id<MTLBuffer> bOut   = [ctx.device newBufferWithLength:n * 8 options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bOut   = [ctx.device newBufferWithLength:nPadded * 8 options:MTLResourceStorageModeShared];
 
     id<MTLCommandBuffer> cb = [ctx.queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
@@ -188,9 +224,9 @@ gpuWalks(MetalCtx& ctx, const unsigned char* target,
     [enc setBuffer:bShared offset:0 atIndex:6];
     [enc setBuffer:bState  offset:0 atIndex:7];
     [enc setBuffer:bOut    offset:0 atIndex:8];
-    [enc setThreadgroupMemoryLength:sizeof(TGStateCPP) atIndex:0];
-    [enc dispatchThreadgroups:MTLSizeMake(n, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc setThreadgroupMemoryLength:WALKS_PER_GROUP * sizeof(TGState4CPP) atIndex:0];
+    [enc dispatchThreadgroups:MTLSizeMake(nPadded / WALKS_PER_GROUP, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(32 * WALKS_PER_GROUP, 1, 1)];
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
