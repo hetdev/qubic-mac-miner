@@ -9,13 +9,25 @@ Apple GPU?**
 
 | Aspect | Result |
 |---|---|
-| Correctness | ✅ **Bit-exact** vs the CPU reference (golden error=4811 + 2 random cases match exactly) |
-| Naive throughput (1 GPU thread = 1 full nonce walk) | ⚠️ **2.1 nonces/s @ 256 batch → 8.3 @ 1024 → 8.0 @ 4096 (plateau)** ≈ 1.2x the 3-thread CPU miner |
-| Per-thread walk latency | 16 s (single walk) → ~500 s under load (the walk is serial + memory-bandwidth bound; CPU does it in 0.4–0.8 s) |
+| Correctness | ✅ **Bit-exact** vs the CPU reference (golden error=4811 + 2 random cases match exactly), for BOTH kernels |
+| v1 naive (1 GPU thread = 1 full walk) | ⚠️ 2.1 nonces/s @256 → 8.3 @1024 → 8.0 @4096 (memory-bandwidth plateau) |
+| **v2 SIMD (1 simdgroup = 1 walk)** | ✅ **24.7 nonces/s @256, 27.7 @1024 — 13x one CPU core, ~4.3x the 3-thread CPU pool miner** |
+| CPU reference | 2.1 nonces/s per core (0.4–0.8 s per walk) |
 
-**Conclusion**: the algorithm ports to Metal perfectly (pure integer math), but
-the "one thread per complete walk" pattern is the wrong GPU strategy. This is
-exactly why the official CUDA trainer does something different (see below).
+**Conclusion**: the algorithm ports to Metal perfectly (pure integer math) and
+the right SIMT mapping makes the M4 GPU meaningfully faster than the CPU miner.
+The only legal intra-nonce parallelism (the node recomputes every nonce with
+reference semantics, so the walk trajectory must stay identical) is the 64-neuron
+tick step: v2 runs one walk per 32-lane simdgroup with the state in threadgroup
+memory and ping-pong neuron buffers.
+
+### Kernel history
+- **v1 `bppWalk`** — one thread per walk, device-memory state: validated the
+  bit-exactness of the port; memory-bound, ~8 nonces/s ceiling.
+- **v2 `bppWalkSimd`** — one simdgroup (32 lanes) per walk; lanes cooperate on
+  the 64 neurons per tick; threadgroup-memory state; ~28 nonces/s.
+- Remaining headroom: pack several walks per threadgroup (26 KB of the 32 KB
+  TG budget), parallelize the rollback/best copies, wider batches.
 
 ## What the official CUDA trainer actually does
 
@@ -49,8 +61,8 @@ legally gray). Solo mining via the native Qiner port has no such wall.
 
 ```bash
 ./build.sh
-./metal_bench validate          # 3 cases, CPU vs GPU bit-exact
-./metal_bench bench 1024        # batched throughput
+./metal_bench validate          # 3 cases, CPU vs GPU bit-exact (v2 kernel)
+./metal_bench bench 1024        # batched throughput (v2 SIMD kernel)
 ```
 
 Files:
