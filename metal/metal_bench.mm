@@ -49,6 +49,29 @@ struct WalkStateCPP
 };
 static_assert(sizeof(WalkStateCPP) == 6528, "WalkState layout must match kernels.metal");
 
+// Must mirror metal::TGState in kernels.metal (v2) — used for the
+// threadgroup-memory length.
+struct TGStateCPP
+{
+    unsigned char  curLut[1728];
+    unsigned char  curInit[64];
+    uint16_t       curNeigh[192];
+    unsigned char  prevLut[1728];
+    unsigned char  prevInit[64];
+    uint16_t       prevNeigh[192];
+    unsigned char  bestLut[1728];
+    unsigned char  bestInit[64];
+    uint16_t       bestNeigh[192];
+    unsigned char  neuronA[64];
+    unsigned char  neuronB[64];
+    uint32_t       counter;
+    uint32_t       failures;
+    uint64_t       ticks;
+    uint64_t       shift;
+    uint32_t       pendingShift;
+};
+static_assert(sizeof(TGStateCPP) == 6688, "TGState layout must match kernels.metal");
+
 struct WalkParamsCPP
 {
     uint32_t controlIndex;
@@ -110,7 +133,7 @@ static bool initMetal(MetalCtx& ctx, const std::string& kernelPath)
     NSError* err = nil;
     id<MTLLibrary> lib = [ctx.device newLibraryWithSource:src options:nil error:&err];
     if (!lib) { fprintf(stderr, "MSL compile error: %s\n", err.localizedDescription.UTF8String); return false; }
-    id<MTLFunction> fn = [lib newFunctionWithName:@"bppWalk"];
+    id<MTLFunction> fn = [lib newFunctionWithName:@"bppWalkSimd"];
     ctx.pipe = [ctx.device newComputePipelineStateWithFunction:fn error:&err];
     if (!ctx.pipe) { fprintf(stderr, "Pipeline error: %s\n", err.localizedDescription.UTF8String); return false; }
     return true;
@@ -165,8 +188,9 @@ gpuWalks(MetalCtx& ctx, const unsigned char* target,
     [enc setBuffer:bShared offset:0 atIndex:6];
     [enc setBuffer:bState  offset:0 atIndex:7];
     [enc setBuffer:bOut    offset:0 atIndex:8];
-    [enc dispatchThreads:MTLSizeMake(n, 1, 1)
-       threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc setThreadgroupMemoryLength:sizeof(TGStateCPP) atIndex:0];
+    [enc dispatchThreadgroups:MTLSizeMake(n, 1, 1)
+       threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
