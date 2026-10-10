@@ -114,8 +114,11 @@ validated changes (see `docs/EXPECTATIONS.md` for the validation detail):
 | `CMakeLists.txt` | `-mrdrnd -mbmi` flags only on x86 |
 | `src/Qiner.cpp` | **Shared random2 pool**: 1 × 512 MB for all threads (was: 512 MB *per thread*) |
 
-Port patches are also exported as `qiner-mac/patches/*.patch` (upstream base:
-`qubic/Qiner@71cfbd6`), so the delta is reviewable without git history.
+The port lives as real commits in the fork
+**[hetdev/Qiner](https://github.com/hetdev/Qiner)** (upstream base
+`qubic/Qiner@71cfbd6`) and is also exported as `qiner-mac/patches/*.patch`
+here, so the delta is reviewable without git history. It is a candidate for an
+upstream PR to [qubic/Qiner](https://github.com/qubic/Qiner).
 
 ### Build and validate
 
